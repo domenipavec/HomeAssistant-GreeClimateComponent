@@ -715,15 +715,21 @@ class GreeClimate(ClimateEntity):
 
     @property
     def min_temp(self):
-        _LOGGER.info('min_temp(): ' + str(MIN_TEMP))
+        t = MIN_TEMP
+        if self._hvac_mode == HVAC_MODE_HEAT:
+            t += 3
+        _LOGGER.info('min_temp(): ' + str(t))
         # Return the minimum temperature.
-        return MIN_TEMP
+        return t
 
     @property
     def max_temp(self):
-        _LOGGER.info('max_temp(): ' + str(MAX_TEMP))
+        t = MAX_TEMP
+        if self._hvac_mode == HVAC_MODE_HEAT:
+            t += 3
+        _LOGGER.info('max_temp(): ' + str(t))
         # Return the maximum temperature.
-        return MAX_TEMP
+        return t
 
     @property
     def target_temperature(self):
