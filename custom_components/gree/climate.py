@@ -21,9 +21,9 @@ from homeassistant.components.climate.const import (
     SUPPORT_TARGET_TEMPERATURE, SUPPORT_SWING_MODE)
 
 from homeassistant.const import (
-    ATTR_UNIT_OF_MEASUREMENT, ATTR_TEMPERATURE, 
-    CONF_NAME, CONF_HOST, CONF_PORT, CONF_MAC, CONF_TIMEOUT, CONF_CUSTOMIZE, 
-    STATE_ON, STATE_OFF, STATE_UNKNOWN, 
+    ATTR_UNIT_OF_MEASUREMENT, ATTR_TEMPERATURE,
+    CONF_NAME, CONF_HOST, CONF_PORT, CONF_MAC, CONF_TIMEOUT, CONF_CUSTOMIZE,
+    STATE_ON, STATE_OFF, STATE_UNKNOWN,
     TEMP_CELSIUS, PRECISION_WHOLE, PRECISION_TENTHS)
 
 from homeassistant.helpers.event import (async_track_state_change)
@@ -110,7 +110,7 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
     swing_modes = SWING_MODES
     encryption_key = config.get(CONF_ENCRYPTION_KEY)
     uid = config.get(CONF_UID)
-    
+
     _LOGGER.info('Adding Gree climate device to hass')
     async_add_devices([
         GreeClimate(hass, name, ip_addr, port, mac_addr, timeout, target_temp_step, temp_sensor_entity_id, lights_entity_id, xfan_entity_id, health_entity_id, powersave_entity_id, sleep_entity_id, eightdegheat_entity_id, air_entity_id, hvac_modes, fan_modes, swing_modes, encryption_key, uid)
@@ -130,7 +130,7 @@ class GreeClimate(ClimateEntity):
         self._target_temperature = None
         self._target_temperature_step = target_temp_step
         self._unit_of_measurement = hass.config.units.temperature_unit
-        
+
         self._current_temperature = None
         self._temp_sensor_entity_id = temp_sensor_entity_id
         self._lights_entity_id = lights_entity_id
@@ -167,7 +167,7 @@ class GreeClimate(ClimateEntity):
             self._uid = uid
         else:
             self._uid = 0
-        
+
         self._acOptions = { 'Pow': None, 'Mod': None, 'SetTem': None, 'WdSpd': None, 'Air': None, 'Blo': None, 'Health': None, 'SwhSlp': None, 'Lig': None, 'SwingLfRig': None, 'SwUpDn': None, 'Quiet': None, 'Tur': None, 'StHt': None, 'TemUn': None, 'HeatCoolType': None, 'TemRec': None, 'SvSt': None, 'SlpMod': None }
 
         self._firstTimeRun = True
@@ -179,7 +179,7 @@ class GreeClimate(ClimateEntity):
             _LOGGER.info('Setting up temperature sensor: ' + str(temp_sensor_entity_id))
             async_track_state_change(
                 hass, temp_sensor_entity_id, self._async_temp_sensor_changed)
-                
+
         if lights_entity_id:
             _LOGGER.info('Setting up lights entity: ' + str(lights_entity_id))
             async_track_state_change(
@@ -214,13 +214,13 @@ class GreeClimate(ClimateEntity):
             _LOGGER.info('Setting up air entity: ' + str(air_entity_id))
             async_track_state_change(
                 hass, air_entity_id, self._async_air_entity_state_changed)
-        
+
         self._unique_id = 'climate.gree_' + mac_addr.decode('utf-8').lower()
 
     # Pad helper method to help us get the right string for encrypting
     def Pad(self, s):
         aesBlockSize = 16
-        return s + (aesBlockSize - len(s) % aesBlockSize) * chr(aesBlockSize - len(s) % aesBlockSize)            
+        return s + (aesBlockSize - len(s) % aesBlockSize) * chr(aesBlockSize - len(s) % aesBlockSize)
 
     def FetchResult(self, cipher, ip_addr, port, timeout, json):
         _LOGGER.info('Fetching(%s, %s, %s, %s)' % (ip_addr, port, timeout, json))
@@ -235,7 +235,7 @@ class GreeClimate(ClimateEntity):
         decryptedPack = cipher.decrypt(base64decodedPack)
         decodedPack = decryptedPack.decode("utf-8")
         replacedPack = decodedPack.replace('\x0f', '').replace(decodedPack[decodedPack.rindex('}')+1:], '')
-        loadedJsonPack = simplejson.loads(replacedPack)        
+        loadedJsonPack = simplejson.loads(replacedPack)
         return loadedJsonPack
 
     def GetDeviceKey(self):
@@ -264,7 +264,7 @@ class GreeClimate(ClimateEntity):
                 acOptions[key] = value
             _LOGGER.info('Done overwriting acOptions')
         return acOptions
-        
+
     def SendStateToAc(self, timeout):
         _LOGGER.info('Start sending state to HVAC')
         statePackJson = '{' + '"opt":["Pow","Mod","SetTem","WdSpd","Air","Blo","Health","SwhSlp","Lig","SwingLfRig","SwUpDn","Quiet","Tur","StHt","TemUn","HeatCoolType","TemRec","SvSt","SlpMod"],"p":[{Pow},{Mod},{SetTem},{WdSpd},{Air},{Blo},{Health},{SwhSlp},{Lig},{SwingLfRig},{SwUpDn},{Quiet},{Tur},{StHt},{TemUn},{HeatCoolType},{TemRec},{SvSt},{SlpMod}],"t":"cmd"'.format(**self._acOptions) + '}'
@@ -292,6 +292,10 @@ class GreeClimate(ClimateEntity):
         else:
             self._target_temperature = self._acOptions['SetTem']
             _LOGGER.info('HA target temp set according to HVAC state to: ' + str(self._acOptions['SetTem']))
+
+    def UpdateHACurrentTemperature(self):
+        self._current_temperature = self._acOptions['TemSen']
+        _LOGGER.info('HA current temp set according to HVAC state to: ' + str(self._acOptions['TemSen']))
 
     def UpdateHAOptions(self):
         # Sync HA with retreived HVAC options
@@ -421,6 +425,7 @@ class GreeClimate(ClimateEntity):
 
     def UpdateHAStateToCurrentACState(self):
         self.UpdateHATargetTemperature()
+        self.UpdateHACurrentTemperature()
         self.UpdateHAOptions()
         self.UpdateHAHvacMode()
         self.UpdateHACurrentSwingMode()
@@ -430,7 +435,7 @@ class GreeClimate(ClimateEntity):
         #Fetch current settings from HVAC
         _LOGGER.info('Starting SyncState')
 
-        optionsToFetch = ["Pow","Mod","SetTem","WdSpd","Air","Blo","Health","SwhSlp","Lig","SwingLfRig","SwUpDn","Quiet","Tur","StHt","TemUn","HeatCoolType","TemRec","SvSt","SlpMod"]
+        optionsToFetch = ["Pow","Mod","SetTem","WdSpd","Air","Blo","Health","SwhSlp","Lig","SwingLfRig","SwUpDn","Quiet","Tur","StHt","TemUn","HeatCoolType","TemRec","SvSt","SlpMod","TemSen"]
         currentValues = self.GreeGetValues(optionsToFetch)
 
         # Set latest status from device
@@ -466,7 +471,7 @@ class GreeClimate(ClimateEntity):
             return
         self._async_update_current_temp(new_state)
         yield from self.async_update_ha_state()
-        
+
     @callback
     def _async_update_current_temp(self, state):
         _LOGGER.info('Thermostat updated with changed temp_sensor state |' + str(state))
@@ -483,11 +488,11 @@ class GreeClimate(ClimateEntity):
 
     def represents_float(self, s):
         _LOGGER.info('temp_sensor state represents_float |' + str(s))
-        try: 
+        try:
             float(s)
             return True
         except ValueError:
-            return False     
+            return False
 
     @asyncio.coroutine
     def _async_lights_entity_state_changed(self, entity_id, old_state, new_state):
@@ -696,19 +701,19 @@ class GreeClimate(ClimateEntity):
         _LOGGER.info('min_temp(): ' + str(MIN_TEMP))
         # Return the minimum temperature.
         return MIN_TEMP
-        
+
     @property
     def max_temp(self):
         _LOGGER.info('max_temp(): ' + str(MAX_TEMP))
         # Return the maximum temperature.
         return MAX_TEMP
-        
+
     @property
     def target_temperature(self):
         _LOGGER.info('target_temperature(): ' + str(self._target_temperature))
         # Return the temperature we try to reach.
         return self._target_temperature
-        
+
     @property
     def target_temperature_step(self):
         _LOGGER.info('target_temperature_step(): ' + str(self._target_temperature_step))
@@ -750,13 +755,13 @@ class GreeClimate(ClimateEntity):
         _LOGGER.info('fan_list(): ' + str(self._fan_modes))
         # Return the list of available fan modes.
         return self._fan_modes
-        
+
     @property
     def supported_features(self):
         _LOGGER.info('supported_features(): ' + str(SUPPORT_FLAGS))
         # Return the list of supported features.
-        return SUPPORT_FLAGS        
- 
+        return SUPPORT_FLAGS
+
     def set_temperature(self, **kwargs):
         _LOGGER.info('set_temperature(): ' + str(kwargs.get(ATTR_TEMPERATURE)))
         # Set new target temperatures.
