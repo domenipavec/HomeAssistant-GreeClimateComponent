@@ -220,6 +220,14 @@ class GreeClimate(ClimateEntity):
         self._unique_id = 'climate.gree_' + mac_addr.decode('utf-8').lower()
 
     def _request(self, data, cipher=None):
+        for i in range(5):
+            try:
+                return self._raw_request(data, cipher)
+            except socket.timeout as e:
+                pass
+        raise e
+
+    def _raw_request(self, data, cipher):
         if cipher is None:
             cipher = self.CIPHER
 
