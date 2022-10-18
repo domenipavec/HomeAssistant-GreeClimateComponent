@@ -158,17 +158,17 @@ class GreeClimate(ClimateEntity):
         self._fan_modes = fan_modes
         self._swing_modes = swing_modes
 
+        if uid:
+            self._uid = uid
+        else:
+            self._uid = 0
+
         if encryption_key:
             _LOGGER.info('Using configured encryption key: {}'.format(encryption_key))
             self._encryption_key = encryption_key.encode("utf8")
         else:
             self._encryption_key = self.GetDeviceKey().encode("utf8")
             _LOGGER.info('Fetched device encrytion key: %s' % str(self._encryption_key))
-
-        if uid:
-            self._uid = uid
-        else:
-            self._uid = 0
 
         self._acOptions = {k: None for k in AC_FIELDS}
 
@@ -220,18 +220,20 @@ class GreeClimate(ClimateEntity):
         self._unique_id = 'climate.gree_' + mac_addr.decode('utf-8').lower()
 
     def _request(self, data, cipher=None):
-        for i in range(5):
+        exc = Exception("initial")
+        for _ in range(5):
             try:
                 return self._raw_request(data, cipher)
             except socket.timeout as e:
-                pass
-        raise e
+                exc = e
+                continue
+        raise exc
 
     def _raw_request(self, data, cipher):
         if cipher is None:
             cipher = self.CIPHER
 
-        _LOGGER.info('Request(%s)' % (json,))
+        _LOGGER.info('Request(%s)' % (data,))
 
         encodedPack = base64.b64encode(cipher.encrypt(self.Pad(simplejson.dumps(data)).encode("utf-8"))).decode("utf-8")
 
@@ -306,7 +308,14 @@ class GreeClimate(ClimateEntity):
             _LOGGER.info('HA target temp set according to HVAC state to: ' + str(self._acOptions['SetTem']))
 
     def UpdateHACurrentTemperature(self):
-        self._current_temperature = self._acOptions['TemSen']
+        t = self._acOptions['TemSen']
+        if not t:
+            return
+        if t > 40:
+            t -= 40
+        if self._hvac_mode == HVAC_MODE_HEAT:
+            t += 3
+        self._current_temperature = t
         _LOGGER.info('HA current temp set according to HVAC state to: ' + str(self._acOptions['TemSen']))
 
     def UpdateHAOptions(self):
@@ -436,12 +445,12 @@ class GreeClimate(ClimateEntity):
         _LOGGER.info('HA fan mode set according to HVAC state to: ' + str(self._fan_mode))
 
     def UpdateHAStateToCurrentACState(self):
-        self.UpdateHATargetTemperature()
-        self.UpdateHACurrentTemperature()
         self.UpdateHAOptions()
         self.UpdateHAHvacMode()
         self.UpdateHACurrentSwingMode()
         self.UpdateHAFanMode()
+        self.UpdateHATargetTemperature()
+        self.UpdateHACurrentTemperature()
 
     def SyncState(self, acOptions = {}):
         #Fetch current settings from HVAC
@@ -718,9 +727,13 @@ class GreeClimate(ClimateEntity):
 
     @property
     def target_temperature(self):
-        _LOGGER.info('target_temperature(): ' + str(self._target_temperature))
+        t = self._target_temperature
+        if self._hvac_mode == HVAC_MODE_HEAT:
+            t += 3
+
+        _LOGGER.info('target_temperature(): ' + str(t))
         # Return the temperature we try to reach.
-        return self._target_temperature
+        return t
 
     @property
     def target_temperature_step(self):
@@ -771,14 +784,17 @@ class GreeClimate(ClimateEntity):
         return SUPPORT_FLAGS
 
     def set_temperature(self, **kwargs):
-        _LOGGER.info('set_temperature(): ' + str(kwargs.get(ATTR_TEMPERATURE)))
+        t = kwargs.get(ATTR_TEMPERATURE)
+        _LOGGER.info('set_temperature(): ' + str(t))
         # Set new target temperatures.
-        if kwargs.get(ATTR_TEMPERATURE) is not None:
+        if t is not None:
             # do nothing if temperature is none
             if not (self._acOptions['Pow'] == 0):
+                if self._hvac_mode == HVAC_MODE_HEAT:
+                    t -= 3
                 # do nothing if HVAC is switched off
-                _LOGGER.info('SyncState with SetTem=' + str(kwargs.get(ATTR_TEMPERATURE)))
-                self.SyncState({ 'SetTem': int(kwargs.get(ATTR_TEMPERATURE))})
+                _LOGGER.info('SyncState with SetTem=' + str(t))
+                self.SyncState({ 'SetTem': int(t)})
                 self.schedule_update_ha_state()
 
     def set_swing_mode(self, swing_mode):
