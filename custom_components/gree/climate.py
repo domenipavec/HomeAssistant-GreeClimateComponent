@@ -68,6 +68,8 @@ HVAC_MODES = [HVAC_MODE_AUTO, HVAC_MODE_COOL, HVAC_MODE_DRY, HVAC_MODE_FAN_ONLY,
 FAN_MODES = ['Auto', 'Low', 'Medium-Low', 'Medium', 'Medium-High', 'High', 'Turbo', 'Quiet']
 SWING_MODES = ['Default', 'Swing in full range', 'Fixed in the upmost position', 'Fixed in the middle-up position', 'Fixed in the middle position', 'Fixed in the middle-low position', 'Fixed in the lowest position', 'Swing in the downmost region', 'Swing in the middle-low region', 'Swing in the middle region', 'Swing in the middle-up region', 'Swing in the upmost region']
 
+AC_FIELDS = ["Pow","Mod","SetTem","WdSpd","Air","Blo","Health","SwhSlp","Lig","SwingLfRig","SwUpDn","Quiet","Tur","StHt","TemUn","HeatCoolType","TemRec","SvSt","SlpMod","TemSen"]
+
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
     vol.Required(CONF_HOST): cv.string,
@@ -119,7 +121,7 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
 class GreeClimate(ClimateEntity):
 
     def __init__(self, hass, name, ip_addr, port, mac_addr, timeout, target_temp_step, temp_sensor_entity_id, lights_entity_id, xfan_entity_id, health_entity_id, powersave_entity_id, sleep_entity_id, eightdegheat_entity_id, air_entity_id, hvac_modes, fan_modes, swing_modes, encryption_key=None, uid=None):
-        _LOGGER.info('Initialize the GREE climate device')
+        _LOGGER.info('Initialize the GREE climate device (%s, %s, %s)' % (ip_addr, port, timeout))
         self.hass = hass
         self._name = name
         self._ip_addr = ip_addr
@@ -168,7 +170,7 @@ class GreeClimate(ClimateEntity):
         else:
             self._uid = 0
 
-        self._acOptions = { 'Pow': None, 'Mod': None, 'SetTem': None, 'WdSpd': None, 'Air': None, 'Blo': None, 'Health': None, 'SwhSlp': None, 'Lig': None, 'SwingLfRig': None, 'SwUpDn': None, 'Quiet': None, 'Tur': None, 'StHt': None, 'TemUn': None, 'HeatCoolType': None, 'TemRec': None, 'SvSt': None, 'SlpMod': None }
+        self._acOptions = {k: None for k in AC_FIELDS}
 
         self._firstTimeRun = True
 
@@ -217,19 +219,31 @@ class GreeClimate(ClimateEntity):
 
         self._unique_id = 'climate.gree_' + mac_addr.decode('utf-8').lower()
 
-    # Pad helper method to help us get the right string for encrypting
-    def Pad(self, s):
-        aesBlockSize = 16
-        return s + (aesBlockSize - len(s) % aesBlockSize) * chr(aesBlockSize - len(s) % aesBlockSize)
+    def _request(self, data, cipher=None):
+        if cipher is None:
+            cipher = self.CIPHER
 
-    def FetchResult(self, cipher, ip_addr, port, timeout, json):
-        _LOGGER.info('Fetching(%s, %s, %s, %s)' % (ip_addr, port, timeout, json))
+        _LOGGER.info('Request(%s)' % (json,))
+
+        encodedPack = base64.b64encode(cipher.encrypt(self.Pad(simplejson.dumps(data)).encode("utf-8"))).decode("utf-8")
+
+        json = simplejson.dumps({
+            "cid": "app",
+            "i": 0,
+            "pack": encodedPack,
+            "t": "pack",
+            "tcid": self._mac_addr,
+            "uid": self._uid,
+        })
+
         clientSock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        clientSock.settimeout(timeout)
-        clientSock.sendto(bytes(json, "utf-8"), (ip_addr, port))
-        data, addr = clientSock.recvfrom(64000)
-        receivedJson = simplejson.loads(data)
+        clientSock.settimeout(self._timeout)
+        clientSock.sendto(bytes(json, "utf-8"), (self._ip_addr, self._port))
+
+        data, _ = clientSock.recvfrom(64000)
         clientSock.close()
+
+        receivedJson = simplejson.loads(data)
         pack = receivedJson['pack']
         base64decodedPack = base64.b64decode(pack)
         decryptedPack = cipher.decrypt(base64decodedPack)
@@ -238,51 +252,41 @@ class GreeClimate(ClimateEntity):
         loadedJsonPack = simplejson.loads(replacedPack)
         return loadedJsonPack
 
+    # Pad helper method to help us get the right string for encrypting
+    def Pad(self, s):
+        aesBlockSize = 16
+        return s + (aesBlockSize - len(s) % aesBlockSize) * chr(aesBlockSize - len(s) % aesBlockSize)
+
     def GetDeviceKey(self):
         _LOGGER.info('Retrieving HVAC encryption key')
         GENERIC_GREE_DEVICE_KEY = "a3K8Bx%2r8Y7#xDh"
         cipher = AES.new(GENERIC_GREE_DEVICE_KEY.encode("utf8"), AES.MODE_ECB)
-        pack = base64.b64encode(cipher.encrypt(self.Pad('{"mac":"' + str(self._mac_addr) + '","t":"bind","uid":0}').encode("utf8"))).decode('utf-8')
-        jsonPayloadToSend = '{"cid": "app","i": 1,"pack": "' + pack + '","t":"pack","tcid":"' + str(self._mac_addr) + '","uid": 0}'
-        return self.FetchResult(cipher, self._ip_addr, self._port, self._timeout, jsonPayloadToSend)['key']
+        return self._request({
+            "t": "bind",
+            "mac": self._mac_addr,
+            "uid": 0,
+        }, cipher=cipher)['key']
 
-    def GreeGetValues(self, propertyNames):
-        jsonPayloadToSend = '{"cid":"app","i":0,"pack":"' + base64.b64encode(self.CIPHER.encrypt(self.Pad('{"cols":' + simplejson.dumps(propertyNames) + ',"mac":"' + str(self._mac_addr) + '","t":"status"}').encode("utf8"))).decode('utf-8') + '","t":"pack","tcid":"' + str(self._mac_addr) + '","uid":{}'.format(self._uid) + '}'
-        return self.FetchResult(self.CIPHER, self._ip_addr, self._port, self._timeout, jsonPayloadToSend)['dat']
-
-    def SetAcOptions(self, acOptions, newOptionsToOverride, optionValuesToOverride = None):
-        if not (optionValuesToOverride is None):
-            _LOGGER.info('Setting acOptions with retrieved HVAC values')
-            for key in newOptionsToOverride:
-                _LOGGER.info('Setting %s: %s' % (key, optionValuesToOverride[newOptionsToOverride.index(key)]))
-                acOptions[key] = optionValuesToOverride[newOptionsToOverride.index(key)]
-            _LOGGER.info('Done setting acOptions')
-        else:
-            _LOGGER.info('Overwriting acOptions with new settings')
-            for key, value in newOptionsToOverride.items():
-                _LOGGER.info('Overwriting %s: %s' % (key, value))
-                acOptions[key] = value
-            _LOGGER.info('Done overwriting acOptions')
-        return acOptions
+    def GreeGetValues(self, propertyNames=AC_FIELDS):
+        data = {
+            "cols": propertyNames,
+            "mac": self._mac_addr,
+            "t": "status",
+        }
+        result = self._request(data)
+        return {
+            propertyNames[i]: result['dat'][i] for i in range(len(propertyNames))
+        }
 
     def SendStateToAc(self, timeout):
         _LOGGER.info('Start sending state to HVAC')
-        statePackJson = '{' + '"opt":["Pow","Mod","SetTem","WdSpd","Air","Blo","Health","SwhSlp","Lig","SwingLfRig","SwUpDn","Quiet","Tur","StHt","TemUn","HeatCoolType","TemRec","SvSt","SlpMod"],"p":[{Pow},{Mod},{SetTem},{WdSpd},{Air},{Blo},{Health},{SwhSlp},{Lig},{SwingLfRig},{SwUpDn},{Quiet},{Tur},{StHt},{TemUn},{HeatCoolType},{TemRec},{SvSt},{SlpMod}],"t":"cmd"'.format(**self._acOptions) + '}'
-        sentJsonPayload = '{"cid":"app","i":0,"pack":"' + base64.b64encode(self.CIPHER.encrypt(self.Pad(statePackJson).encode("utf8"))).decode('utf-8') + '","t":"pack","tcid":"' + str(self._mac_addr) + '","uid":{}'.format(self._uid) + '}'
-        # Setup UDP Client & start transfering
-        clientSock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        clientSock.settimeout(timeout)
-        clientSock.sendto(bytes(sentJsonPayload, "utf-8"), (self._ip_addr, self._port))
-        data, addr = clientSock.recvfrom(64000)
-        receivedJson = simplejson.loads(data)
-        clientSock.close()
-        pack = receivedJson['pack']
-        base64decodedPack = base64.b64decode(pack)
-        decryptedPack = self.CIPHER.decrypt(base64decodedPack)
-        decodedPack = decryptedPack.decode("utf-8")
-        replacedPack = decodedPack.replace('\x0f', '').replace(decodedPack[decodedPack.rindex('}')+1:], '')
-        receivedJsonPayload = simplejson.loads(replacedPack)
-        _LOGGER.info('Done sending state to HVAC: ' + str(receivedJsonPayload))
+        data = {
+            "t": "cmd",
+            "opt": [k for k in AC_FIELDS if self._acOptions[k] is not None],
+            "p": [self._acOptions[k] for k in AC_FIELDS if self._acOptions[k] is not None],
+        }
+        receivedPayload = self._request(data)
+        _LOGGER.info('Done sending state to HVAC: ' + str(receivedPayload))
 
     def UpdateHATargetTemperature(self):
         # Sync set temperature to HA. If 8℃ heating is active we set the temp in HA to 8℃ so that it shows the same as the AC display.
@@ -435,18 +439,15 @@ class GreeClimate(ClimateEntity):
         #Fetch current settings from HVAC
         _LOGGER.info('Starting SyncState')
 
-        optionsToFetch = ["Pow","Mod","SetTem","WdSpd","Air","Blo","Health","SwhSlp","Lig","SwingLfRig","SwUpDn","Quiet","Tur","StHt","TemUn","HeatCoolType","TemRec","SvSt","SlpMod","TemSen"]
-        currentValues = self.GreeGetValues(optionsToFetch)
+        currentValues = self.GreeGetValues()
 
         # Set latest status from device
-        self._acOptions = self.SetAcOptions(self._acOptions, optionsToFetch, currentValues)
+        self._acOptions.update(currentValues)
 
         # Overwrite status with our choices
         if not(acOptions == {}):
-            self._acOptions = self.SetAcOptions(self._acOptions, acOptions)
+            self._acOptions.update(acOptions)
 
-        # Initialize the receivedJsonPayload variable (for return)
-        receivedJsonPayload = ''
 
         # If not the first (boot) run, update state towards the HVAC
         if not (self._firstTimeRun):
@@ -461,7 +462,6 @@ class GreeClimate(ClimateEntity):
         self.UpdateHAStateToCurrentACState()
 
         _LOGGER.info('Finished SyncState')
-        return receivedJsonPayload
 
     @asyncio.coroutine
     def _async_temp_sensor_changed(self, entity_id, old_state, new_state):
