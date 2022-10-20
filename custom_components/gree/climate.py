@@ -1,15 +1,10 @@
 #!/usr/bin/python
 # Do basic imports
-import importlib.util
 import socket
 import base64
-import re
-import sys
 
 import asyncio
 import logging
-import binascii
-import os.path
 import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
 
@@ -22,14 +17,10 @@ from homeassistant.components.climate.const import (
 
 from homeassistant.const import (
     ATTR_UNIT_OF_MEASUREMENT, ATTR_TEMPERATURE,
-    CONF_NAME, CONF_HOST, CONF_PORT, CONF_MAC, CONF_TIMEOUT, CONF_CUSTOMIZE,
-    STATE_ON, STATE_OFF, STATE_UNKNOWN,
-    TEMP_CELSIUS, PRECISION_WHOLE, PRECISION_TENTHS)
+    CONF_NAME, CONF_HOST, CONF_PORT, CONF_MAC, CONF_TIMEOUT, STATE_ON, STATE_OFF, STATE_UNKNOWN)
 
 from homeassistant.helpers.event import (async_track_state_change)
 from homeassistant.core import callback
-from homeassistant.helpers.restore_state import RestoreEntity
-from configparser import ConfigParser
 from Crypto.Cipher import AES
 try: import simplejson
 except ImportError: import json as simplejson
@@ -219,17 +210,18 @@ class GreeClimate(ClimateEntity):
 
         self._unique_id = 'climate.gree_' + mac_addr.decode('utf-8').lower()
 
-    def _request(self, data, cipher=None):
+    def _request(self, data, cipher=None, i=0):
         exc = Exception("initial")
-        for _ in range(5):
+        for _ in range(10):
             try:
-                return self._raw_request(data, cipher)
+                return self._raw_request(data, cipher, i)
             except socket.timeout as e:
+                _LOGGER.warning('Retrying Gree request timeout')
                 exc = e
                 continue
         raise exc
 
-    def _raw_request(self, data, cipher):
+    def _raw_request(self, data, cipher, i):
         if cipher is None:
             cipher = self.CIPHER
 
@@ -239,7 +231,7 @@ class GreeClimate(ClimateEntity):
 
         json = simplejson.dumps({
             "cid": "app",
-            "i": 0,
+            "i": i,
             "pack": encodedPack,
             "t": "pack",
             "tcid": self._mac_addr,
@@ -275,7 +267,7 @@ class GreeClimate(ClimateEntity):
             "t": "bind",
             "mac": self._mac_addr,
             "uid": 0,
-        }, cipher=cipher)['key']
+        }, cipher=cipher, i=1)['key']
 
     def GreeGetValues(self, propertyNames=AC_FIELDS):
         data = {
@@ -452,7 +444,7 @@ class GreeClimate(ClimateEntity):
         self.UpdateHATargetTemperature()
         self.UpdateHACurrentTemperature()
 
-    def SyncState(self, acOptions = {}):
+    def SyncState(self, updates = {}):
         #Fetch current settings from HVAC
         _LOGGER.info('Starting SyncState')
 
@@ -461,14 +453,17 @@ class GreeClimate(ClimateEntity):
         # Set latest status from device
         self._acOptions.update(currentValues)
 
+        # remove any updates that are already set
+        updates = dict(set(updates.items()) - set(self._acOptions.items()))
+
         # Overwrite status with our choices
-        if not(acOptions == {}):
-            self._acOptions.update(acOptions)
+        if not(updates == {}):
+            self._acOptions.update(updates)
 
 
         # If not the first (boot) run, update state towards the HVAC
         if not (self._firstTimeRun):
-            if not(acOptions == {}):
+            if not(updates == {}):
                 # loop used to send changed settings from HA to HVAC
                 self.SendStateToAc(self._timeout)
         else:
