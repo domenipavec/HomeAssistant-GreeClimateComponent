@@ -2,6 +2,7 @@
 # Do basic imports
 import socket
 import base64
+import threading
 
 import asyncio
 import logging
@@ -52,6 +53,8 @@ DEFAULT_TARGET_TEMP_STEP = 1
 # from the remote control and gree app
 MIN_TEMP = 16
 MAX_TEMP = 30
+
+HEAT_MODE_OFFSET = 3
 
 # fixed values in gree mode lists
 HVAC_MODES = [HVAC_MODE_AUTO, HVAC_MODE_COOL, HVAC_MODE_DRY, HVAC_MODE_FAN_ONLY, HVAC_MODE_HEAT, HVAC_MODE_OFF]
@@ -119,6 +122,8 @@ class GreeClimate(ClimateEntity):
         self._port = port
         self._mac_addr = mac_addr.decode('utf-8').lower()
         self._timeout = timeout
+
+        self._lock = threading.Lock()
 
         self._target_temperature = None
         self._target_temperature_step = target_temp_step
@@ -211,15 +216,16 @@ class GreeClimate(ClimateEntity):
         self._unique_id = 'climate.gree_' + mac_addr.decode('utf-8').lower()
 
     def _request(self, data, cipher=None, i=0):
-        exc = Exception("initial")
-        for _ in range(10):
-            try:
-                return self._raw_request(data, cipher, i)
-            except socket.timeout as e:
-                _LOGGER.warning('Retrying Gree request timeout')
-                exc = e
-                continue
-        raise exc
+        with self._lock:
+            exc = Exception("initial")
+            for _ in range(10):
+                try:
+                    return self._raw_request(data, cipher, i)
+                except socket.timeout as e:
+                    _LOGGER.warning('Retrying Gree request timeout')
+                    exc = e
+                    continue
+            raise exc
 
     def _raw_request(self, data, cipher, i):
         if cipher is None:
@@ -306,7 +312,7 @@ class GreeClimate(ClimateEntity):
         if t > 40:
             t -= 40
         if self._hvac_mode == HVAC_MODE_HEAT:
-            t += 3
+            t += HEAT_MODE_OFFSET
         self._current_temperature = t
         _LOGGER.info('HA current temp set according to HVAC state to: ' + str(self._acOptions['TemSen']))
 
@@ -712,7 +718,7 @@ class GreeClimate(ClimateEntity):
     def min_temp(self):
         t = MIN_TEMP
         if self._hvac_mode == HVAC_MODE_HEAT:
-            t += 3
+            t += HEAT_MODE_OFFSET
         _LOGGER.info('min_temp(): ' + str(t))
         # Return the minimum temperature.
         return t
@@ -721,7 +727,7 @@ class GreeClimate(ClimateEntity):
     def max_temp(self):
         t = MAX_TEMP
         if self._hvac_mode == HVAC_MODE_HEAT:
-            t += 3
+            t += HEAT_MODE_OFFSET
         _LOGGER.info('max_temp(): ' + str(t))
         # Return the maximum temperature.
         return t
@@ -730,7 +736,7 @@ class GreeClimate(ClimateEntity):
     def target_temperature(self):
         t = self._target_temperature
         if self._hvac_mode == HVAC_MODE_HEAT:
-            t += 3
+            t += HEAT_MODE_OFFSET
 
         _LOGGER.info('target_temperature(): ' + str(t))
         # Return the temperature we try to reach.
@@ -792,7 +798,7 @@ class GreeClimate(ClimateEntity):
             # do nothing if temperature is none
             if not (self._acOptions['Pow'] == 0):
                 if self._hvac_mode == HVAC_MODE_HEAT:
-                    t -= 3
+                    t -= HEAT_MODE_OFFSET
                 # do nothing if HVAC is switched off
                 _LOGGER.info('SyncState with SetTem=' + str(t))
                 self.SyncState({ 'SetTem': int(t)})
