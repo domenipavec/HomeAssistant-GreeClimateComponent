@@ -1,6 +1,7 @@
 import base64
 from Crypto.Cipher import AES
 from datetime import timedelta
+from functools import partial
 import json
 import logging
 import socket
@@ -91,21 +92,36 @@ class GreeCoordinator(DataUpdateCoordinator):
     def update_state(self, **kwargs):
         self.updates.update(kwargs)
 
-    def _request(self, data, cipher=None, i=0):
+    def _socket_request_job(self, data):
+        clientSock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        clientSock.settimeout(self._timeout)
+        clientSock.sendto(data, (self._host, self._port))
+
+        data, _ = clientSock.recvfrom(64000)
+        clientSock.close()
+
+        return data
+
+    async def _socket_request(self, data):
+        return await self.hass.async_add_executor_job(
+            partial(self._socket_request_job, data)
+        )
+
+    async def _request(self, data, cipher=None, i=0):
         exc = Exception("initial")
         for _ in range(10):
             try:
-                return self._raw_request(data, cipher, i)
+                return await self._raw_request(data, cipher, i)
             except socket.timeout as e:
                 _LOGGER.warning('Retrying Gree request timeout')
                 exc = e
                 continue
         raise exc
 
-    def _raw_request(self, data, cipher, i):
+    async def _raw_request(self, data, cipher, i):
         if cipher is None:
             if self._cipher is None:
-                AES.new(self._get_device_key().encode("utf8"), AES.MODE_ECB)
+                self._cipher = AES.new(await self._get_device_key().encode("utf8"), AES.MODE_ECB)
             cipher = self._cipher
 
         _LOGGER.info('Request(%s)' % (data,))
@@ -121,12 +137,7 @@ class GreeCoordinator(DataUpdateCoordinator):
             "uid": self._uid,
         })
 
-        clientSock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        clientSock.settimeout(self._timeout)
-        clientSock.sendto(bytes(jsonData, "utf-8"), (self._host, self._port))
-
-        data, _ = clientSock.recvfrom(64000)
-        clientSock.close()
+        data = await self._socket_request(bytes(jsonData, "utf-8"))
 
         receivedJson = json.loads(data)
         pack = receivedJson['pack']
@@ -140,32 +151,32 @@ class GreeCoordinator(DataUpdateCoordinator):
 
         return loadedJsonPack
 
-    def _get_device_key(self):
+    async def _get_device_key(self):
         cipher = AES.new(GENERIC_GREE_DEVICE_KEY.encode("utf8"), AES.MODE_ECB)
-        return self._request({
+        return await self._request({
             "t": "bind",
             "mac": self._mac,
             "uid": 0,
         }, cipher=cipher, i=1)['key']
 
-    def _get_values(self):
+    async def _get_values(self):
         data = {
             "cols": AC_FIELDS,
             "mac": self._mac,
             "t": "status",
         }
-        result = self._request(data)
+        result = await self._request(data)
         return {
             AC_FIELDS[i]: result['dat'][i] for i in range(len(AC_FIELDS))
         }
 
-    def _set_values(self, new_values):
+    async def _set_values(self, new_values):
         data = {
             "t": "cmd",
             "opt": [k for k in AC_FIELDS if new_values[k] is not None],
             "p": [new_values[k] for k in AC_FIELDS if new_values[k] is not None],
         }
-        self._request(data)
+        await self._request(data)
 
     async def _async_update_data(self):
         _LOGGER.info('_async_update_data: get current values')
@@ -173,7 +184,7 @@ class GreeCoordinator(DataUpdateCoordinator):
         # load updates
         updates = self.updates.copy()
 
-        current_values = self._get_values()
+        current_values = await self._get_values()
 
         _LOGGER.info('_async_update_data: current values: %s' % current_values)
 
@@ -191,7 +202,7 @@ class GreeCoordinator(DataUpdateCoordinator):
         _LOGGER.info('_async_update_data: updates: %s' % updates)
 
         current_values.update(updates)
-        self._set_values(current_values)
+        await self._set_values(current_values)
 
         _LOGGER.info('_async_update_data: new current values: %s' % current_values)
 
@@ -218,7 +229,7 @@ class GreeClimate(CoordinatorEntity, ClimateEntity):
         if not t:
             return
         if self.hvac_mode == HVAC_MODE_HEAT:
-            t += HEAT_MODE_OFFSET
+            t += offset
         return t
 
     @property
@@ -264,24 +275,24 @@ class GreeClimate(CoordinatorEntity, ClimateEntity):
         return _choose(FAN_MODES, self.coordinator.data.get('WdSpd'))
 
 
-    async def async_set_fan_mode(self, fan):
-        if fan == 'Turbo':
+    async def async_set_fan_mode(self, fan_mode):
+        if fan_mode == 'Turbo':
             self.coordinator.update_state(Tur=1, Quiet=0)
-        elif fan == 'Quiet':
+        elif fan_mode == 'Quiet':
             self.coordinator.update_state(Tur=0, Quiet=1)
         else:
-            self.coordinator.update_state(WdSpd=str(FAN_MODES.index(fan)), Tur=0, Quiet=0)
+            self.coordinator.update_state(WdSpd=str(FAN_MODES.index(fan_mode)), Tur=0, Quiet=0)
         await self.coordinator.async_request_refresh()
 
-    async def async_set_hvac_mode(self, hvac):
-        if hvac == HVAC_MODE_OFF:
+    async def async_set_hvac_mode(self, hvac_mode):
+        if hvac_mode == HVAC_MODE_OFF:
             self.coordinator.update_state(Pow=0)
         else:
-            self.coordinator.update_state(Mod=HVAC_MODES.index(hvac), Pow=1)
+            self.coordinator.update_state(Mod=HVAC_MODES.index(hvac_mode), Pow=1)
         await self.coordinator.async_request_refresh()
 
-    async def async_set_swing_mode(self, swing):
-        self.coordinator.update_state(SwUpDn=SWING_MODES.index(swing))
+    async def async_set_swing_mode(self, swing_mode):
+        self.coordinator.update_state(SwUpDn=SWING_MODES.index(swing_mode))
         await self.coordinator.async_request_refresh()
 
     async def async_set_temperature(self, **kwargs):
