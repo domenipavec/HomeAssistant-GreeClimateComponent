@@ -59,7 +59,7 @@ async def async_setup_platform(hass, config, async_add_devices, discovery_info=N
     name = config.get(CONF_NAME)
     host = config.get(CONF_HOST)
     port = config.get(CONF_PORT)
-    mac = config.get(CONF_MAC).encode().replace(b':', b'')
+    mac = config.get(CONF_MAC).replace(':', '')
 
     coordinator = GreeCoordinator(hass, name, host, port, mac)
     await coordinator.async_config_entry_first_refresh()
