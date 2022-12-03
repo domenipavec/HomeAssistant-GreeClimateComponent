@@ -121,7 +121,8 @@ class GreeCoordinator(DataUpdateCoordinator):
     async def _raw_request(self, data, cipher, i):
         if cipher is None:
             if self._cipher is None:
-                self._cipher = AES.new(await self._get_device_key().encode("utf8"), AES.MODE_ECB)
+                key = await self._get_device_key()
+                self._cipher = AES.new(key.encode("utf8"), AES.MODE_ECB)
             cipher = self._cipher
 
         _LOGGER.info('Request(%s)' % (data,))
@@ -153,11 +154,12 @@ class GreeCoordinator(DataUpdateCoordinator):
 
     async def _get_device_key(self):
         cipher = AES.new(GENERIC_GREE_DEVICE_KEY.encode("utf8"), AES.MODE_ECB)
-        return await self._request({
+        resp = await self._request({
             "t": "bind",
             "mac": self._mac,
             "uid": 0,
-        }, cipher=cipher, i=1)['key']
+        }, cipher=cipher, i=1)
+        return resp['key']
 
     async def _get_values(self):
         data = {
@@ -181,12 +183,13 @@ class GreeCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         _LOGGER.info('_async_update_data: get current values')
 
-        # load updates
-        updates = self.updates.copy()
-
         current_values = await self._get_values()
 
         _LOGGER.info('_async_update_data: current values: %s' % current_values)
+
+        # load updates
+        updates = self.updates
+        self.updates = {}
 
         # remove any updates that are already set
         updates = dict(set(updates.items()) - set(current_values.items()))
@@ -205,9 +208,6 @@ class GreeCoordinator(DataUpdateCoordinator):
         await self._set_values(current_values)
 
         _LOGGER.info('_async_update_data: new current values: %s' % current_values)
-
-        # reset updates
-        self.updates = {}
 
         return current_values
 
@@ -281,7 +281,7 @@ class GreeClimate(CoordinatorEntity, ClimateEntity):
         elif fan_mode == 'Quiet':
             self.coordinator.update_state(Tur=0, Quiet=1)
         else:
-            self.coordinator.update_state(WdSpd=str(FAN_MODES.index(fan_mode)), Tur=0, Quiet=0)
+            self.coordinator.update_state(WdSpd=FAN_MODES.index(fan_mode), Tur=0, Quiet=0)
         await self.coordinator.async_request_refresh()
 
     async def async_set_hvac_mode(self, hvac_mode):
