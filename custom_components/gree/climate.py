@@ -59,6 +59,8 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 
 
 async def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+    _LOGGER.info('Setting up Gree climate platform %s, %s' % (config, discovery_info))
+
     name = config.get(CONF_NAME)
     host = config.get(CONF_HOST)
     port = config.get(CONF_PORT)
@@ -71,10 +73,12 @@ async def async_setup_platform(hass, config, async_add_devices, discovery_info=N
         'coordinator': coordinator,
     }
 
+    _LOGGER.info('Adding Gree climate devices to hass')
     async_add_devices([
         GreeClimate(hass, coordinator, name, mac),
     ])
 
+    _LOGGER.info('Loading switch platform for gree')
     hass.helpers.discovery.load_platform('switch', DOMAIN, {}, config)
 
 
