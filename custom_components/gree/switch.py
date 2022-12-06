@@ -19,8 +19,8 @@ async def async_setup_platform(hass, config, async_add_devices, discovery_info=N
 
     _LOGGER.info('Setting up Gree switch platform %s, %s' % (config, discovery_info))
 
-    name = config.get(CONF_NAME)
-    mac = config.get(CONF_MAC).replace(':', '')
+    name = discovery_info.get(CONF_NAME)
+    mac = discovery_info.get(CONF_MAC).replace(':', '')
 
     coordinator = hass.data[DOMAIN]['coordinator']
 

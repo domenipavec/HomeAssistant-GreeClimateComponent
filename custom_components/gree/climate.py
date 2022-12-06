@@ -79,7 +79,7 @@ async def async_setup_platform(hass, config, async_add_devices, discovery_info=N
     ])
 
     _LOGGER.info('Loading switch platform for gree')
-    hass.helpers.discovery.load_platform('switch', DOMAIN, {}, config)
+    hass.helpers.discovery.load_platform('switch', DOMAIN, config, config)
 
 
 class GreeCoordinator(DataUpdateCoordinator):
