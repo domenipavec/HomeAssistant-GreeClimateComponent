@@ -66,7 +66,14 @@ async def async_setup_platform(hass, config, async_add_devices, discovery_info=N
     await coordinator.async_config_entry_first_refresh()
 
     async_add_devices([
-        GreeClimate(hass, coordinator, name, mac)
+        GreeClimate(hass, coordinator, name, mac),
+        GreeSwitch(coordinator, name + ' Lights', mac, 'Lig'),
+        GreeSwitch(coordinator, name + ' XFan', mac, 'Blo'),
+        GreeSwitch(coordinator, name + ' Health', mac, 'Health'),
+        GreeSwitch(coordinator, name + ' Powersave', mac, 'SvSt'),
+        GreeSwitch(coordinator, name + ' Sleep', mac, 'SwhSlp'),
+        GreeSwitch(coordinator, name + ' 8C', mac, 'StHt'),
+        GreeSwitch(coordinator, name + ' Air', mac, 'Air'),
     ])
 
 
@@ -301,6 +308,36 @@ class GreeClimate(CoordinatorEntity, ClimateEntity):
             return
         self.coordinator.update_state(SetTem=self._adjust_for_heat_mode(int(t), offset=-HEAT_MODE_OFFSET))
         await self.coordinator.async_request_refresh()
+
+class GreeSwitch(CoordinatorEntity, ClimateEntity):
+    def __init__(self, coordinator, name, mac, key):
+        super().__init__(coordinator)
+
+        self._key = key
+
+        self._attr_name = name
+        self._attr_unique_id = 'climate.gree_' + key.lower() + '_' + format_mac(mac)
+
+    @property
+    def is_on(self):
+        v = self.coordinator.data.get(self._key)
+        if v == 1:
+            return True
+        elif v == 0:
+            return False
+        else:
+            return None
+
+    async def async_turn_on(self, **kwargs):
+        await self._update_key(1)
+
+    async def async_turn_off(self, **kwargs):
+        await self._update_key(0)
+
+    async def _update_key(self, value):
+        self.coordinator.update_state(**{self._key: value})
+        await self.coordinator.async_request_refresh()
+
 
 def _choose(options, value):
     if value is None:
