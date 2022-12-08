@@ -5,6 +5,7 @@ from homeassistant.const import (
     CONF_NAME, CONF_MAC,
 )
 from homeassistant.helpers.device_registry import format_mac
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import DOMAIN
@@ -44,6 +45,11 @@ class GreeSwitch(CoordinatorEntity, SwitchEntity):
 
         self._attr_name = name
         self._attr_unique_id = 'switch.gree_' + key.lower() + '_' + format_mac(mac)
+        self._attr_device_info = DeviceInfo(
+            identifiers={
+                (DOMAIN, format_mac(mac)),
+            },
+        )
 
     @property
     def is_on(self):

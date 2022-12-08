@@ -18,6 +18,7 @@ from homeassistant.const import (
 )
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.device_registry import format_mac
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -236,6 +237,12 @@ class GreeClimate(CoordinatorEntity, ClimateEntity):
         self._attr_target_temperature_step = 1
         self._attr_temperature_unit = hass.config.units.temperature_unit
         self._attr_unique_id = 'climate.gree_' + format_mac(mac)
+        self._attr_device_info = DeviceInfo(
+            identifiers={
+                (DOMAIN, format_mac(mac)),
+            },
+            name = name,
+        )
 
     def _adjust_for_heat_mode(self, t, offset=HEAT_MODE_OFFSET):
         if not t:
